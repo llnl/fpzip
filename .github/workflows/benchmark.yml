@@ -1,0 +1,147 @@
+name: Fpzip.Net Performance Benchmark
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  run-benchmarks:
+    runs-on: ubuntu-latest # Or windows-latest if native build is easier/preferred there
+
+    steps:
+    - name: Checkout Fpzip.Net repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # For MinVer if it were used here (not strictly necessary for benchmark if not versioning benchmark itself)
+
+    # Section 1: Build Native C++ fpzip_cli
+    # This assumes the native/fpzip-1.3.0 directory contains the C++ source and CMakeLists.txt
+    - name: Setup C++ Build Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ make # Common C++ build tools for Linux
+
+    - name: Configure CMake for native fpzip
+      run: cmake -S native/fpzip-1.3.0 -B native/fpzip-1.3.0/build -DCMAKE_BUILD_TYPE=Release
+      # -S <source_dir> -B <build_dir>
+
+    - name: Build native fpzip_cli with CMake
+      run: cmake --build native/fpzip-1.3.0/build --config Release
+      # This will produce the executable, e.g., native/fpzip-1.3.0/build/bin/fpzip_cli
+
+    - name: List native build output
+      run: ls -R native/fpzip-1.3.0/build
+
+    # Make the native executable accessible to the benchmark runner
+    # Option 1: Copy to a known location or add its build path to PATH
+    - name: Prepare native executable for benchmark
+      run: |
+        mkdir -p ${{ github.workspace }}/cli_tools
+        cp native/fpzip-1.3.0/build/fpzip_cli ${{ github.workspace }}/cli_tools/fpzip_cli
+        # On Windows, it would be fpzip_cli.exe. Adjust path and name if needed.
+        echo "${{ github.workspace }}/cli_tools" >> $GITHUB_PATH # Add to PATH for benchmark to find
+        # The benchmark C# code will try to find "fpzip_cli" or "fpzip_cli.exe"
+
+    # Section 2: Build and Run .NET Benchmarks
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x' # Match project TargetFramework
+
+    - name: Restore .NET dependencies
+      run: dotnet restore Fpzip.Net.Benchmark/Fpzip.Net.Benchmark.csproj
+
+    - name: Build .NET Benchmark project
+      run: dotnet build Fpzip.Net.Benchmark/Fpzip.Net.Benchmark.csproj --configuration Release --no-restore
+
+    - name: Run Benchmarks
+      id: run_benchmark_step # Give an id to the step to potentially access its output if needed
+      run: dotnet run --project Fpzip.Net.Benchmark/Fpzip.Net.Benchmark.csproj --configuration Release --no-build -- --filter "*" --join
+      # BenchmarkDotNet arguments: --filter "*" to run all, --join to get summary.
+      # Output will be in BenchmarkDotNet.Artifacts by default.
+
+    # Section 3: Parse Results, Compare, and Gate (Placeholder)
+    # This is the complex part and would typically involve a script.
+    # BenchmarkDotNet produces JSON and Markdown results which can be parsed.
+    - name: Analyze Benchmark Results (Placeholder)
+      id: analyze_benchmarks
+      run: |
+        echo "--- Benchmark Results (Markdown) ---"
+        # BenchmarkDotNet typically outputs to BenchmarkDotNet.Artifacts/results/*-report-full.md
+        # Find the markdown report. There should be only one for a single run.
+        REPORT_MD=$(find ./BenchmarkDotNet.Artifacts/results -name "*-report-full.md" -print -quit)
+        if [ -f "$REPORT_MD" ]; then
+          cat "$REPORT_MD"
+        else
+          echo "Benchmark report not found."
+          # Potentially fail here if report is critical
+        fi
+
+        echo "--- Placeholder for Performance Comparison Logic ---"
+        # This script would:
+        # 1. Parse necessary metrics (e.g., Mean execution time) from $REPORT_MD or JSON output.
+        #    BenchmarkDotNet also produces JSON results which are easier to parse.
+        #    Example: find ./BenchmarkDotNet.Artifacts/results -name "*.json"
+        # 2. Identify corresponding .NET and Native C++ benchmark results.
+        #    (e.g., "Fpzip.Net Float Compress" vs "Native C++ Float Compress")
+        # 3. Calculate the percentage difference.
+        #    Example: ((Time_DotNet / Time_Cpp) - 1) * 100
+        # 4. If diff > 5.0, then `exit 1` to fail the workflow.
+
+        # For now, this step will always pass.
+        echo "NET_SLOWER_PERCENTAGE=3.0" >> $GITHUB_OUTPUT # Dummy output
+        echo "Comparison logic not yet implemented. Assuming within threshold."
+        # To make this a real gate, if comparison fails:
+        # exit 1
+
+    - name: Performance Gate
+      if: steps.analyze_benchmarks.outputs.NET_SLOWER_PERCENTAGE > 5.0
+      run: |
+        echo "Error: .NET performance is more than 5% slower than native C++."
+        echo ".NET performance degradation: ${{ steps.analyze_benchmarks.outputs.NET_SLOWER_PERCENTAGE }}%"
+        exit 1
+
+    # Optional: Upload Benchmark Artifacts
+    - name: Upload benchmark artifacts
+      if: always() # Always run to upload artifacts even if gating fails
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-artifacts
+        path: ./BenchmarkDotNet.Artifacts/
+        retention-days: 14
+
+# Notes on making the gate effective:
+# - The `analyze_benchmarks` step needs a robust script to parse JSON/Markdown from BenchmarkDotNet.
+#   This script should output the performance difference (e.g., `NET_SLOWER_PERCENTAGE`).
+# - The `Performance Gate` step then uses this output to fail the job.
+# - If this `benchmark.yml` workflow is intended to block NuGet publishing:
+#   The `release.yml` (NuGet publish workflow) would need to be modified to either:
+#   a) Run *after* this benchmark workflow completes successfully on the `main` branch for a given commit.
+#      This can be done using `workflow_run` trigger if benchmarks are on `main` before release.
+#   b) Or, if releases are tagged and benchmarks run against tags, this benchmark job could be
+#      a prerequisite job *within* the `release.yml` workflow itself.
+#      e.g., `publish-job: needs: run-benchmarks ...`
+#      This seems more direct for gating a release.
+#
+# For now, this workflow runs independently and the gate is within this workflow.
+# To make it a blocker for NuGet publishing in `release.yml`, you'd add:
+# jobs:
+#   benchmark: # Reference this job from benchmark.yml or copy its definition
+#     uses: ./.github/workflows/benchmark.yml # If using callable workflows
+#     # or define the steps here
+#   publish-nuget:
+#     needs: benchmark # Make sure benchmark job passes
+#     # ... rest of publish steps
+# This example keeps them separate for clarity of the benchmark workflow itself.
+# If they are separate, the release manager must check benchmark status manually before releasing,
+# or a more complex inter-workflow dependency is needed (e.g. status checks via GitHub API).
+#
+# The simplest way to gate the release.yml is to make this benchmark job a required check for PRs to main,
+# and ensure releases are only made from main after such checks have passed.
+# Then, the release.yml implicitly benefits from this gating.
+# If a release is cut from a commit that failed benchmarks (if that were allowed),
+# then adding this benchmark job as a `needs` in `release.yml` would be best.
+# For now, this workflow provides the benchmark run and a placeholder gate.
