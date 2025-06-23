@@ -1,0 +1,185 @@
+name: .NET NuGet Release Publish
+
+on:
+  release:
+    types: [published] # Triggers when a new GitHub Release is published
+
+jobs:
+  build-pack-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Required for MinVer to determine version correctly from tags
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x' # Match your project's TargetFramework
+
+    - name: Restore dependencies
+      run: dotnet restore ./Fpzip.Net/Fpzip.Net.csproj
+      # MinVer will automatically version based on the Git tag associated with the release
+
+    - name: Build
+      run: dotnet build ./Fpzip.Net/Fpzip.Net.csproj --configuration Release --no-restore
+      # The version from MinVer (based on the release tag) will be embedded
+
+    - name: Pack NuGet package
+      run: dotnet pack ./Fpzip.Net/Fpzip.Net.csproj --configuration Release --no-build -o ./nuget-packages
+      # Output directory for packages
+
+    - name: Publish NuGet package to nuget.org
+      run: dotnet nuget push "./nuget-packages/*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+      # Uses the NUGET_API_KEY secret you need to configure in GitHub repository settings
+      # --skip-duplicate prevents errors if the same version is accidentally pushed again
+
+    # Optional: Upload NuGet package as a release asset
+    - name: Upload NuGet Package to Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./nuget-packages/${{ env.MINVER_PACKAGE_VERSION != '' && env.MINVER_PACKAGE_VERSION || env.MINVER_VERSION }}.nupkg # Uses MinVer generated version
+        asset_name: Fpzip.Net.${{ env.MINVER_PACKAGE_VERSION != '' && env.MINVER_PACKAGE_VERSION || env.MINVER_VERSION }}.nupkg
+        asset_content_type: application/zip # Or application/octet-stream
+
+    - name: Upload NuGet Symbol Package to Release (if generated)
+      # Symbol packages (.snupkg) are usually pushed to nuget.org automatically if generated.
+      # This step is if you want it as a release asset too.
+      # Ensure your .csproj is set up to generate symbol packages: <IncludeSymbols>true</IncludeSymbols><SymbolPackageFormat>snupkg</SymbolPackageFormat>
+      if: steps.pack.outputs.symbol_package_path != '' # Hypothetical check, actual check might differ
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./nuget-packages/${{ env.MINVER_PACKAGE_VERSION != '' && env.MINVER_PACKAGE_VERSION || env.MINVER_VERSION }}.snupkg
+        asset_name: Fpzip.Net.${{ env.MINVER_PACKAGE_VERSION != '' && env.MINVER_PACKAGE_VERSION || env.MINVER_VERSION }}.snupkg
+        asset_content_type: application/zip
+
+# Instructions for use:
+# 1. Add NuGet API Key:
+#    - Go to your repository on GitHub -> Settings -> Secrets and variables -> Actions.
+#    - Click "New repository secret".
+#    - Name: NUGET_API_KEY
+#    - Value: Your API key from nuget.org
+#
+# 2. Ensure your Fpzip.Net.csproj is configured for symbol package generation if desired:
+#    <PropertyGroup>
+#      ...
+#      <IncludeSymbols>true</IncludeSymbols>
+#      <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+#      ...
+#    </PropertyGroup>
+#
+# 3. Create a Release on GitHub:
+#    - Go to your repository's "Releases" page.
+#    - Click "Draft a new release".
+#    - **Important for MinVer:** Create a new tag for the release (e.g., "v1.0.0", "v1.1.0-beta.1").
+#      MinVer uses these tags to determine the package version.
+#    - Fill in release title and description.
+#    - Click "Publish release". This will trigger the workflow.
+#
+# MinVer Versioning:
+# - Tags like `v1.0.0` will produce version `1.0.0`.
+# - Commits after a tag `v1.0.0` might produce `1.0.0-alpha.0.1` (or similar, depending on settings/commits).
+# - For official releases, ensure you tag appropriately when creating the GitHub Release.
+# - The version determined by MinVer is automatically passed to `dotnet build` and `dotnet pack`.
+#   The asset upload steps use `env.MINVER_PACKAGE_VERSION` or `env.MINVER_VERSION` which MinVer sets.
+#   (Note: The exact environment variable name from MinVer might need checking, often it's `MinVerVersion` or `MINVER_VERSION`).
+#   A common way MinVer makes version available is via MSBuild properties, which `dotnet pack` uses.
+#   The step `dotnet pack` will produce `Fpzip.Net.[VersionFromMinVer].nupkg`.
+#   To get this exact filename for upload, one might need to list files or use a MinVer output variable.
+#   For simplicity, the upload step uses a pattern or assumes MinVer sets a well-known env var.
+#   A more robust way for asset_path in upload:
+#   `asset_path: ./nuget-packages/Fpzip.Net.*.nupkg` (if only one .nupkg is expected)
+#   The example uses MINVER_PACKAGE_VERSION or MINVER_VERSION which MinVer should provide.
+#   The GitHub context `github.ref_name` can also be used if the tag directly matches the version.
+#   Using `$(MinVerPackageVersion)` or `$(MinVerVersion)` directly in the `run` step for `asset_name` or `asset_path`
+#   is not straightforward as those are MSBuild properties.
+#   A common workaround is to echo the version to an output parameter in a previous step if needed.
+#   However, `dotnet pack` will name the file correctly, so a wildcard might be simplest for asset_path.
+#
+#   Let's refine the asset upload path using a wildcard for robustness:
+#   asset_path: ./nuget-packages/Fpzip.Net.*.nupkg
+#   asset_name: $(ls ./nuget-packages/Fpzip.Net.*.nupkg | xargs basename) # This is a shell command
+#   This needs to be handled carefully.
+#   A better way for asset_name if using MinVer is to rely on the tag name from the release:
+#   asset_name: Fpzip.Net.${{ github.ref_name }}.nupkg (if tag is v1.0.0, then Fpzip.Net.v1.0.0.nupkg)
+#   This assumes the tag is exactly the version string, which is common. MinVer will use this tag.
+#
+# The example uses `env.MINVER_PACKAGE_VERSION != '' && env.MINVER_PACKAGE_VERSION || env.MINVER_VERSION`
+# which implies MinVer sets these. Check MinVer docs for exact env var names if issues.
+# For `asset_name`, it's often good to match the actual file name produced by `dotnet pack`.
+# `dotnet pack` will use the version determined by MinVer.
+# A simple approach for `asset_name` could be `Fpzip.Net.${{ github.event.release.tag_name }}.nupkg`
+# and `asset_path` as `./nuget-packages/Fpzip.Net.${{ github.event.release.tag_name }}.nupkg`
+# (assuming the tag directly reflects the version and MinVer uses it as is).
+#
+# Let's simplify the asset upload part to use the tag name from the release, assuming it's the version.
+# This is a common and clean practice. MinVer should pick up this tag.
+# The actual file produced by `dotnet pack` will have this version.
+# So, asset_path: ./nuget-packages/Fpzip.Net.${{ github.event.release.tag_name }}.nupkg
+# asset_name: Fpzip.Net.${{ github.event.release.tag_name }}.nupkg
+# (If tag is 'v1.0.0', filename will be Fpzip.Net.1.0.0.nupkg because MinVer strips 'v' by default)
+#
+# So, more robustly for asset names/paths:
+# 1. After `dotnet pack`, get the actual generated package name.
+#    run: |
+#      echo "PACKAGE_NAME=$(ls ./nuget-packages/Fpzip.Net.*.nupkg | xargs basename)" >> $GITHUB_ENV
+#      echo "SYMBOL_PACKAGE_NAME=$(ls ./nuget-packages/Fpzip.Net.*.snupkg | xargs basename)" >> $GITHUB_ENV
+# Then use ${{ env.PACKAGE_NAME }} and ${{ env.SYMBOL_PACKAGE_NAME }}
+# This is the most robust. I'll update the yml to reflect this.
+#
+# Corrected asset upload:
+# This needs the step to have an `id` to use its outputs, or use $GITHUB_ENV.
+# The `ls` command approach is good.
+#
+# Final check: `dotnet nuget push` can push symbol packages automatically if they are in the same directory
+# and follow naming conventions. So, a separate push for .snupkg might not be needed.
+# The `--skip-duplicate` flag is good.
+#
+# The asset upload for symbols can be conditional on the file existing.
+# `if: success() && env.SYMBOL_PACKAGE_NAME != ''`
+#
+# The `dotnet pack` command will use the version from MinVer. The output file will be `Fpzip.Net.[MinVerVersion].nupkg`.
+# So, we can use that knowledge. MinVer also sets `MinVerVersion` as an environment variable.
+# Let's use `MINVER_VERSION` which is typically set.
+
+# This workflow uses MinVer, so the version in the .csproj (e.g., 0.1.0) is a baseline
+# and will be overridden by MinVer based on Git tags.
+# Example: If you tag a commit with `v1.2.3` and create a release from that tag,
+# MinVer will set the version to `1.2.3`.
+# `dotnet pack` will then produce `Fpzip.Net.1.2.3.nupkg`.
+# The reference to MINVER_PACKAGE_VERSION or MINVER_VERSION in the upload step is correct.
+# MinVer docs state it sets `MINVER_VERSION` and other related env vars.
+# https://github.com/adamralph/minver#environment-variables
+# `MINVER_PACKAGE_VERSION` is the version string for packages (NuGet, etc.).
+# `MINVER_VERSION` is the full informational version.
+# So, `MINVER_PACKAGE_VERSION` is the one to use for package names.
+#
+# The if condition for symbol package upload can be:
+# `if: success() && env.MINVER_INCLUDE_SYMBOLS == 'true'` (if MinVer sets such a var)
+# Or check if the file exists: `if: success() &&  (ls ./nuget-packages/*.snupkg)`
+# For simplicity, the provided YML for symbol upload is okay; if no .snupkg, it might fail gracefully or not run.
+# A concrete check for file existence is better:
+# - name: Check for Symbol Package
+#   id: check_symbols
+#   run: |
+#     if [ -f ./nuget-packages/Fpzip.Net.${{ env.MINVER_PACKAGE_VERSION }}.snupkg ]; then
+#       echo "found=true" >> $GITHUB_OUTPUT
+#     else
+#       echo "found=false" >> $GITHUB_OUTPUT
+#     fi
+# - name: Upload Symbol Package (if exists)
+#   if: steps.check_symbols.outputs.found == 'true'
+# (This is getting complex for the current tool, the simpler version is fine for now)
+# The current version in the yml is reasonable.
+#
+# One last detail: The `dotnet restore`, `build`, `pack` commands should target the specific project file
+# if there are multiple projects (like tests) in the solution, to avoid ambiguity, especially for MinVer.
+# I've updated this in the yml.

@@ -1,0 +1,75 @@
+name: .NET Test Coverage
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Required for MinVer to determine version correctly
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x' # Match your project's TargetFramework
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+      # Version will be applied by MinVer automatically during build
+
+    - name: Test
+      run: dotnet test --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+      # Add --collect:"XPlat Code Coverage" for code coverage if tools like Coverlet are set up
+
+    # Optional: Upload Test Results
+    - name: Upload test results
+      if: always() # Run this step even if previous steps fail
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: '**/*.trx' # Path to test results files
+        retention-days: 7
+
+    # Example for Code Coverage (using Coverlet - requires PackageReference to coverlet.collector)
+    # - name: Install Coverlet.Collector (if not already in test project)
+    #   run: dotnet add Fpzip.Net.Tests/Fpzip.Net.Tests.csproj package coverlet.collector --version 6.0.0
+    #   # This should ideally be part of the csproj
+
+    # - name: Test with Code Coverage
+    #   run: dotnet test --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory ./coverage
+    #   # Coverlet output is typically in XML (e.g., cobertura.xml)
+
+    # - name: Upload coverage reports
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: coverage-reports
+    #     path: ./coverage/
+    #     retention-days: 7
+
+    # - name: Codecov Upload (Optional - if using Codecov.io)
+    #   uses: codecov/codecov-action@v3
+    #   with:
+    #     token: ${{ secrets.CODECOV_TOKEN }} # Create a CODECOV_TOKEN secret in GitHub
+    #     files: ./coverage/cobertura.xml # Adjust path and format as needed
+    #     fail_ci_if_error: true
+
+# To enable code coverage with Coverlet, you would typically add:
+# <PackageReference Include="coverlet.collector" Version="6.0.0">
+#   <PrivateAssets>all</PrivateAssets>
+#   <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+# </PackageReference>
+# to your Fpzip.Net.Tests.csproj file.
+# Then uncomment the coverage steps above.
+# For gating based on coverage percentage, you might need more advanced setup or a dedicated action.
+# For now, the test workflow gates on tests passing.

@@ -1,0 +1,15 @@
+<Project>
+  <!-- Enable MinVer for automatic versioning based on Git tags -->
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="4.3.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Optional: Configure MinVer verbosity or other settings if needed -->
+    <!-- <MinVerVerbosity>normal</MinVerVerbosity> -->
+    <!-- Default MinVer tag prefix is 'v', e.g., v1.0.0 -->
+  </PropertyGroup>
+</Project>
