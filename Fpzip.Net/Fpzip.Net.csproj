@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>0.1.0</Version>
+    <Authors>Jules (AI Agent)</Authors>
+    <Description>A .NET port of the core fpzip compression codec for single and double-precision floating-point arrays. Optimized for spatially correlated data. Supports lossless and lossy compression.</Description>
+    <Copyright>Copyright (c) LLNL (original C++ fpzip), Ported by Jules (AI Agent) for Neighborly</Copyright>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/nickna/Neighborly</PackageProjectUrl> <!-- Or specific repo for this lib if standalone -->
+    <RepositoryUrl>https://github.com/nickna/Neighborly</RepositoryUrl> <!-- Or specific repo for this lib -->
+    <PackageTags>fpzip;compression;floating-point;double;single;float;data;arrays;vectors;science;llm;embeddings;neighborly</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile> <!-- This includes XML docs in the package -->
+    <PackageReleaseNotes>Initial release of Fpzip.Net. Implements core fpzip compression and decompression for float and double arrays. Targets compatibility with original fpzip's FP_SAFE mode.</PackageReleaseNotes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\"/>
+  </ItemGroup>
+
+</Project>
